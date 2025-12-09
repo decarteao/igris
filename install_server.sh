@@ -1,6 +1,5 @@
 #!/bin/bash
 
-sudo su
 cd /root
 apt update -y
 
@@ -17,7 +16,10 @@ ExecStart=/root/igrisserver
 WorkingDirectory=/root/
 StandardOutput=inherit
 StandardError=inherit
-Restart=always
+Restart=on-failure
+LimitNOFILE=200000
+LimitNPROC=65536
+TasksMax=infinity
 
 [Install]
 WantedBy=multi-user.target
@@ -27,6 +29,9 @@ systemctl daemon-reload
 
 systemctl enable igrisserver
 systemctl restart igrisserver
+
+# aumentar os limites do kernel
+ulimit -n 200000
 
 reboot
 

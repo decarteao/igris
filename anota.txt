@@ -1,0 +1,5 @@
+# corrigir o controle do socket destino(tem que fechar quando a conexao falhar durante o fluxo)
+# ao dar control+c no server, ele buga e nao fecha(fica num loop de erro dizendo que o network etc...)
+# adicionar o protocolo no app
+# resolver a logica nova da api pro app
+

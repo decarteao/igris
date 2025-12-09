@@ -361,8 +361,5 @@ public class IgrisClient {
         });
         streamMap.clear();
         LOG.log(Level.INFO, "IgrisClient Parado.");
-        
-        // Mata o processo se estiver rodando via Main (opcional, bom para debug)
-        System.exit(0);
     }
 }
