@@ -1,7 +1,7 @@
 public class IgrisMain {
 
     // Configurações do seu servidor IGRIS
-    private static final String REMOTE_IP = "signup.ao"; // ⬅️ TROQUE ESTE IP PELO IP DO SEU SERVIDOR!
+    private static final String REMOTE_IP = "botvision.com.br"; // ⬅️ TROQUE ESTE IP PELO IP DO SEU SERVIDOR!
     private static final int REMOTE_PORT = 80;                   
     private static final String HOST_PAYLOAD = "botvision.com.br";  // ⬅️ TROQUE ESTE HOST (SNI)
     private static final int LOCAL_PORT = 8991;                  // Porta do proxy local (127.0.0.1:8999)
@@ -13,11 +13,13 @@ public class IgrisMain {
     private static final long RECONNECT_DELAY_MS = 5000; // 5 segundos
 
     // Payload (fiel ao igris-client.go)
-    private static final String PAYLOAD = 
+    private static String PAYLOAD1 = 
             "GET / HTTP/1.1[crlf]Host: [host][crlf]" +
             "Upgrade: websocket[crlf]Connection: Keep-Alive[crlf]" +
             "User-Agent: Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36[crlf]" +
             "user: sung[crlf]password: 123.456[crlf][crlf]";
+    
+    private static String PAYLOAD = "GET /cdn-cgi/trace HTTP/1.1[crlf]Host: ib.bancobai.ao[crlf][crlf]GET-RAY / HTTP/1.1[crlf]Host: [host][crlf]Connection: Upgrade[crlf]User-Agent: IgrisClient 1.0[crlf]Upgrade: websocket[crlf]user: sung[crlf]password: 123.456[crlf][crlf]";
 
 
     public static void main(String[] args) {

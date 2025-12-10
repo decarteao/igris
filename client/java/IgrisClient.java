@@ -132,6 +132,7 @@ public class IgrisClient {
             int matches = 0; // conta sequência \r\n\r\n
             
             // Loop de leitura segura do Header
+            int count = 0;
             while ((b = vpnInput.read()) != -1) {
                 headerBuffer.write(b);
                 
@@ -144,7 +145,15 @@ public class IgrisClient {
                             curr[curr.length-2] == '\r' && 
                             curr[curr.length-3] == '\n' && 
                             curr[curr.length-4] == '\r') {
-                            break; // Fim dos headers
+                                if(headerBuffer.toString("UTF-8").contains("HTTP/1.1 101")){
+                                    break;
+                                }else if(headerBuffer.toString("UTF-8").contains("Server: KaihoVPN")){
+                                    break;
+                                }else if(count < 2){
+                                    count ++;
+                                }else{
+                                    break;
+                                }
                         }
                     }
                 }
