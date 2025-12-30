@@ -4,7 +4,7 @@
 
 ```
 rm *.class
-javac IgrisClient.java IgrisMain.java
-java -cp . IgrisMain
+javac IgrisClientCli.java IgrisMainCli.java
+java -cp . IgrisMainCli
 
 ```

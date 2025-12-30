@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/bin/
+
+# I delete the build app ':)
 
 cd /root
 apt update -y

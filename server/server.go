@@ -2,28 +2,23 @@ package main
 
 import (
 	"bufio"
-	// "context"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/things-go/go-socks5"
+	"github.com/armon/go-socks5"
 	"github.com/xtaci/smux"
 )
 
 var (
-	currentConnections int64 = 0    // total de usuarios ativos
-	maxConnections     int64 = 5000 // maximo de usuarios ativos
+	currentConnections int64 = 0
+	maxConnections     int64 = 5000
 )
 
 const (
@@ -32,65 +27,47 @@ const (
 	listenIPSocks    = "127.0.0.1"
 	listenPortSocks  = 8999
 	bufferSize       = 16 * 1024
-	readHeaderLimit  = 8 * 1024 // limite para leitura de header
-	connDialTimeout  = 8 * time.Second
-	streamIdleTO     = 30 * time.Second
-	sessionKeepAlive = 10 * time.Second
-
-	// autenticação
-	user     = "sung"
-	password = "123.456"
+	readHeaderLimit  = 8 * 1024
+	connDialTimeout  = 10 * time.Second
+	streamIdleTO     = 60 * time.Second
+	sessionKeepAlive = 20 * time.Second
 )
 
-// pools para buffers (reuso)
-var bufPool = sync.Pool{
-	New: func() interface{} {
-		b := make([]byte, bufferSize)
-		return &b
-	},
-}
-
-var logger = log.New(os.Stdout, "", log.LstdFlags)
+var logger = log.New(os.Stdout, "[!] ", log.LstdFlags)
+var socksServer *socks5.Server
 
 func main() {
-	// Carregar configurações de ambiente
-	if val, err := strconv.ParseInt(os.Getenv("MAX_CONN"), 10, 64); err == nil {
-		maxConnections = val
-	}
+	go startSocks()
+	startServer()
+}
 
-	// Iniciar servidor Socks5 interno
-	go startSocks5()
-
-	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", listenIP, listenPort))
+func startSocks() {
+	var err error
+	// Parâmetros: addr, ip, user, pass, tcpTimeout, udpTimeout
+	socksServer, err = socks5.New(&socks5.Config{})
 	if err != nil {
-		logger.Fatal(err)
+		panic(err)
 	}
-	defer ln.Close()
+}
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+func startServer() {
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", listenIP, listenPort))
+	if err != nil {
+		logger.Fatalf("Erro ao iniciar servidor: %v", err)
+	}
+
+	logger.Printf("IgrisServer na porta %d", listenPort)
 
 	go func() {
-		<-stop
-		logger.Println("\n[!] Shutdown recebido, fechando listener...")
-		_ = ln.Close()
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+		os.Exit(0)
 	}()
 
-	logger.Printf("[!] Servidor Otimizado na porta %d\n", listenPort)
-	logger.Printf("[!] Limite de Conexões: %d\n", maxConnections)
-
 	for {
-		conn, err := ln.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return
-			}
-			continue
-		}
-
-		// Controle de conexões máximas
-		if atomic.LoadInt64(&currentConnections) >= maxConnections {
-			conn.Close()
 			continue
 		}
 
@@ -99,51 +76,45 @@ func main() {
 }
 
 func handleConnection(conn net.Conn) {
-	// 1. Definir um tempo limite para o handshake inicial (Proteção anti-slowloris)
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	defer conn.Close()
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
-	reader := bufio.NewReaderSize(conn, bufferSize)
+	// Usamos um buffer para ler o cabeçalho sem perder os bytes para o SMUX
+	bufReader := bufio.NewReaderSize(conn, readHeaderLimit)
+	head, _ := bufReader.Peek(1024)
+	headerStr := string(head)
 
-	// 2. FAST-PATH: Ler apenas a primeira linha para o endpoint /users
-	firstLine, err := reader.ReadString('\n')
-	if err != nil {
-		return
-	}
-
-	if strings.Contains(firstLine, "GET /users") {
-		handleUsers(conn)
-		return
-	}
-
-	// 3. Processar o resto do Header para WebSocket/VPN
-	// (Caso o cliente envie headers em múltiplas linhas)
-	fullHeader := firstLine
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil || line == "\r\n" || line == "\n" {
-			break
-		}
-		fullHeader += line
-		if len(fullHeader) > readHeaderLimit {
-			return
-		}
-	}
-
-	// 4. Se chegou aqui, é uma tentativa de túnel. Limpar Deadline para o tráfego fluir.
 	conn.SetReadDeadline(time.Time{})
 
-	// Responder ao cliente que a conexão foi aceita (Handshake HTTP)
-	_, _ = conn.Write([]byte("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"))
+	// --- NOVA ROTA /USERS ---
+	if strings.Contains(headerStr, "GET /users") {
+		handleUsersStatus(conn)
+		return
+	}
 
-	// Configuração Otimizada do Smux para Redes Móveis
+	// Verifica limite de conexões apenas para o Túnel VPN
+	if atomic.LoadInt64(&currentConnections) >= maxConnections {
+		conn.Write([]byte("HTTP/1.1 503 Service Unavailable\r\n\r\nServer Full"))
+		conn.Close()
+		return
+	}
+
+	// Handshake do Túnel
+	if strings.Contains(headerStr, "Upgrade:") || strings.Contains(headerStr, "HTTP/1.1") {
+		conn.Write([]byte("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"))
+	}
+
 	smuxConfig := smux.DefaultConfig()
-	smuxConfig.MaxReceiveBuffer = 4 * 1024 * 1024 // 4MB Buffer
-	smuxConfig.KeepAliveInterval = sessionKeepAlive
-	smuxConfig.KeepAliveTimeout = 30 * time.Second
+	smuxConfig.Version = 1
+
+	smuxConfig.MaxReceiveBuffer = 4194304
+	smuxConfig.MaxStreamBuffer = 1048576
+
+	smuxConfig.KeepAliveInterval = 20 * time.Second
+	smuxConfig.KeepAliveTimeout = 60 * time.Second
 
 	session, err := smux.Server(conn, smuxConfig)
 	if err != nil {
+		conn.Close()
 		return
 	}
 	defer session.Close()
@@ -160,11 +131,19 @@ func handleConnection(conn net.Conn) {
 	}
 }
 
-func handleUsers(conn net.Conn) {
-	// Resposta HTTP simples e rápida
-	usersOnline := atomic.LoadInt64(&currentConnections)
-	response := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%d",
-		len(strconv.FormatInt(usersOnline, 10)), usersOnline)
+// Função para exibir o status
+func handleUsersStatus(conn net.Conn) {
+	defer conn.Close()
+
+	online := atomic.LoadInt64(&currentConnections)
+
+	body := fmt.Sprintf(`{"data": "%d/%d"}`, online, maxConnections)
+
+	response := fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+		"Content-Type: text/plain\r\n"+
+		"Content-Length: %d\r\n"+
+		"Connection: close\r\n"+
+		"\r\n%s", len(body), body)
 
 	conn.Write([]byte(response))
 }
@@ -172,40 +151,11 @@ func handleUsers(conn net.Conn) {
 func handleStream(stream *smux.Stream) {
 	defer stream.Close()
 
-	// Conectar ao Socks5 local
-	target, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", listenIPSocks, listenPortSocks), connDialTimeout)
-	if err != nil {
+	// A mágica acontece aqui:
+	// A lib txthinking processa o stream como se fosse uma conexão direta
+	// CORREÇÃO AQUI: Acessamos o campo Handler e chamamos o método Handle
+	if err := socksServer.ServeConn(stream); err != nil {
 		return
 	}
-	defer target.Close()
 
-	done := make(chan struct{})
-	go func() {
-		copyData(target, stream)
-		close(done)
-	}()
-
-	go func() {
-		copyData(stream, target)
-		close(done)
-	}()
-
-	<-done
-}
-
-func copyData(dst io.Writer, src io.Reader) {
-	bufRef := bufPool.Get().(*[]byte)
-	defer bufPool.Put(bufRef)
-	_, _ = io.CopyBuffer(dst, src, *bufRef)
-}
-
-func startSocks5() {
-	server := socks5.NewServer(
-		socks5.WithAuthMethods([]socks5.Authenticator{
-			socks5.UserPassAuthenticator{Credentials: socks5.StaticCredentials{user: password}},
-		}),
-	)
-	if err := server.ListenAndServe("tcp", fmt.Sprintf("%s:%d", listenIPSocks, listenPortSocks)); err != nil {
-		logger.Fatal("Erro no Socks5:", err)
-	}
 }

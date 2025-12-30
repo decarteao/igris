@@ -7,3 +7,10 @@ ulimit -n 100000
 
 # poupar a CPU
 GOGC=200 ./igris
+
+# BadVPN for UDP in TCP
+/root/badvpn_udp --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 5000 --loglevel info
+
+
+
+
